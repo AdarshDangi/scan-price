@@ -98,10 +98,10 @@ Return:
 
 If you cannot identify the product, set productName to "Unknown product" and explain in summary.`;
 
-    const { experimental_output } = await generateText({
+    const { output } = await generateText({
       model: gateway("google/gemini-3-flash-preview"),
       prompt,
-      experimental_output: Output.object({
+      output: Output.object({
         schema: z.object({
           productName: z.string(),
           priceEstimate: z.string(),
@@ -117,7 +117,7 @@ If you cannot identify the product, set productName to "Unknown product" and exp
       }),
     });
 
-    const out = experimental_output as PriceResult;
+    const out = output as PriceResult;
     return {
       ...out,
       imageUrl: out.imageUrl ?? scrapedImage,
