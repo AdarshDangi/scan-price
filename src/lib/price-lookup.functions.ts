@@ -76,7 +76,7 @@ export const lookupPrice = createServerFn({ method: "POST" })
     }
 
     const { createLovableAiGatewayProvider } = await import("./ai-gateway.server");
-    const { generateText, Output } = await import("ai");
+    const { generateText } = await import("ai");
     const gateway = createLovableAiGatewayProvider(lovableKey);
 
     const prompt = `You are a product price estimator. Based on the input and the web data below, identify the product and estimate its current retail price.
@@ -87,40 +87,51 @@ Input type: ${kind}
 Web data:
 ${context}
 
-Return:
-- productName: short clean product name
-- priceEstimate: human-readable price or range (e.g. "$199" or "$180 - $220")
-- priceLow / priceHigh: numeric low/high in the chosen currency; null if unknown
-- currency: ISO code like "USD", "EUR", "INR"
-- summary: 1-2 sentence description of the product and pricing notes
-- imageUrl: a product image URL if available in the data, else null
-- sources: up to 3 most relevant source URLs from the web data
+Respond with ONLY a raw JSON object (no markdown, no code fences, no commentary) matching exactly this shape:
+{
+  "productName": string,
+  "priceEstimate": string,
+  "priceLow": number | null,
+  "priceHigh": number | null,
+  "currency": string,
+  "summary": string,
+  "imageUrl": string | null,
+  "sources": [{ "title": string, "url": string }]
+}
 
-If you cannot identify the product, set productName to "Unknown product" and explain in summary.`;
+Rules:
+- priceEstimate is human-readable (e.g. "$199" or "$180 - $220").
+- priceLow/priceHigh are raw numbers without thousands separators or currency symbols; use null if unknown.
+- currency is an ISO code like "USD", "EUR", "INR".
+- summary is 1-2 sentences.
+- sources: up to 3 most relevant URLs from the web data.
+- If you cannot identify the product, set productName to "Unknown product" and explain in summary.`;
 
-    const { output } = await generateText({
+    const { text: raw } = await generateText({
       model: gateway("google/gemini-3-flash-preview"),
       prompt,
-      output: Output.object({
-        schema: z.object({
-          productName: z.string(),
-          priceEstimate: z.string(),
-          priceLow: z.number().nullable(),
-          priceHigh: z.number().nullable(),
-          currency: z.string(),
-          summary: z.string(),
-          imageUrl: z.string().nullable(),
-          sources: z
-            .array(z.object({ title: z.string(), url: z.string() }))
-            .max(5),
-        }),
-      }),
     });
 
-    const out = output as PriceResult;
+    function extractJSON(s: string): any {
+      let cleaned = s
+        .replace(/^```json\s*/im, "")
+        .replace(/^```\s*/im, "")
+        .replace(/```\s*$/im, "")
+        .trim();
+      if (!cleaned.startsWith("{") && !cleaned.startsWith("[")) {
+        const start = cleaned.indexOf("{");
+        const end = cleaned.lastIndexOf("}");
+        if (start !== -1 && end > start) cleaned = cleaned.slice(start, end + 1);
+        else throw new Error("No valid JSON found in AI response");
+      }
+      return JSON.parse(cleaned);
+    }
+
+    const parsed = ResultSchema.parse(extractJSON(raw));
     return {
-      ...out,
-      imageUrl: out.imageUrl ?? scrapedImage,
-      sources: out.sources?.length ? out.sources : sources.slice(0, 3),
+      ...parsed,
+      imageUrl: parsed.imageUrl ?? scrapedImage,
+      sources: parsed.sources?.length ? parsed.sources : sources.slice(0, 3),
     };
   });
+
